@@ -8,14 +8,11 @@ extern crate benfred_read_process_memory;
 
 use benfred_read_process_memory::*;
 use std::convert::TryInto;
-use sysinfo::{System, SystemExt, ProcessExt, Pid};
+use sysinfo::{System, SystemExt, Pid};
 use std::io::{self, BufRead, Write};
 use std::str::FromStr;
 use std::collections::{BTreeMap, BTreeSet};
 use std::cmp;
-//use std::path::Path;
-//use std::ffi::OsStr;
-//use std::result::Result;
 
 fn print_help() {
     writeln!(&mut io::stdout(), "                  ==   procview v.0.1.0   ==                  ");
@@ -33,13 +30,12 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
     match input.trim() {
         "help" => print_help(),
         "ps" => {
-            sys.refresh_all();
             let mut ps_bst = BTreeMap::new();
-            for (pid, proc_) in sys.get_process_list() {
-                ps_bst.insert(pid, proc_);
+            for process in procfs::all_processes() {
+                ps_bst.insert(process.stat.pid, process.stat.comm);
             }
             for (key, val) in ps_bst.iter(){
-                let val_exec_only = val.name().split_whitespace().next();
+                let val_exec_only = val.split_whitespace().next();
                 match val_exec_only {
                     Some(name) => writeln!(&mut io::stdout(), "{}:\t{}", key, name),
                     None => writeln!(&mut io::stdout(), "{}:\t-", key)
@@ -47,6 +43,7 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
             }
         }
         e if e.starts_with("pst ") => {
+            sys.refresh_all();
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 2 {
                 writeln!(&mut io::stdout(), "pst command expects a pid argument");
