@@ -2,10 +2,13 @@
 
 #![allow(unused_must_use, non_upper_case_globals)]
 
+//Crate Imports, procfs does most of the work, 
+//sysinfo unfortunately had to be retained to easily read threads (couldn't find the ability in other crates)
 extern crate sysinfo;
 extern crate procfs;
 extern crate benfred_read_process_memory;
 
+//some scoping
 use benfred_read_process_memory::*;
 use std::convert::TryInto;
 use sysinfo::{System, SystemExt, Pid};
@@ -14,6 +17,8 @@ use std::str::FromStr;
 use std::collections::{BTreeMap, BTreeSet};
 use std::cmp;
 
+
+//This function just prints the preformatted help display
 fn print_help() {
     writeln!(&mut io::stdout(), "                  ==   procview v.0.1.0   ==                  ");
     writeln!(&mut io::stdout(), "                  ==  Available Commands  ==                  ");
@@ -24,11 +29,17 @@ fn print_help() {
     writeln!(&mut io::stdout(), "        lm <pid> : View Loaded Modules Within Process         ");
     writeln!(&mut io::stdout(), "        xp <pid> : View Executable Pages Within Process       ");
     writeln!(&mut io::stdout(), "   mem <pid> <#> : View Memory of Executable Page (# from xp) ");
+    writeln!(&mut io::stdout(), "            exit : Close the Program                          ");
 }
 
+//This function contains the main control structure, parsing the user input give to is my main, it is also given access to
+//A System variable for the sysinfo crate to use. It returns a Bool that indicates if the program should stop execution.
 fn parse_input(input: &str, sys: &mut System) -> bool {
     match input.trim() {
+        //help menu display
         "help" => print_help(),
+        //ps displays all of the system processes in numerical order.
+        //This importantly displays PID so that the remaining commands can be more easily used
         "ps" => {
             let mut ps_bst = BTreeMap::new();
             for process in procfs::all_processes() {
@@ -42,6 +53,7 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 };
             }
         }
+        //pst displays additional threads that are associated with the given PID, it does not show the main process thread again.
         e if e.starts_with("pst ") => {
             sys.refresh_all();
             let tmp : Vec<&str> = e.split(' ').collect();
@@ -60,6 +72,7 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 };
             }
         }
+        //lm shows the loaded modules that the process has. It uses a helper function to gather the data from a pid
         e if e.starts_with("lm ") => {
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 2 {
@@ -70,6 +83,8 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 }
             }
         }
+        //xp shows all the executable parts in the processes memory, It gives address ranges and uses the string stored by the helper function to identify each area.
+        //importantly, a number identifier is shown next to each range of addresses, this is used to view the memory directly with the mem command
         e if e.starts_with("xp ") => {
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 2 {
@@ -79,7 +94,9 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                     writeln!(&mut io::stdout(), "|-- ({}) -- {:X?} - {:X?} :\t{}", index, add1, add2, name);
                 }
             }
-        }        
+        }
+        //mem shows the actal contents of memory given a pid, and a number, as identified in the xp command
+        //this command will jump into a different mode for viewing the memory, a piece at a time.       
         e if e.starts_with("mem ") => {
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 3 {
@@ -99,7 +116,9 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 }
             }
         }
+        //quit or exit are both valid commands to exit the program
         "quit" | "exit" => return true,
+        //anything unmatched will return this error messege
         _e => {
             writeln!(&mut io::stdout(),"Unknown command.");
         }
@@ -115,15 +134,18 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     hex_bytes.join("")
 }
 
+//This is the "helper" function that does all of the memory display. It takes a pid and 2 u64s for the address range.
+
 fn display_memory(pid: i32, add1: u64, add2: u64) {
     let handle: ProcessHandle = pid.try_into().unwrap();
     let t_stin = io::stdin();
     let mut stin = t_stin.lock();
     let mut done = false;
+    //to make sure we correct track what we are displaying, we use a range variable and an offset that starts at 0
     let range = add2-add1;
     let mut offset = 0;
     while !done && offset < range {
-        let mut chunk_size = cmp::min(400, range-offset);
+        let mut chunk_size = cmp::min(400, range-offset);  //10 lines of 40 bytes to display per screen, chuck_size tracks the per screen amount
         writeln!(&mut io::stdout(), "Viewing PID: {} Current Memory Addresses: {:X?} - {:X?}", pid, add1+offset, add1+offset+chunk_size);
         while chunk_size >= 40 {
             copy_address((add1+offset) as usize, cmp::min(40, chunk_size as usize), &handle)
@@ -131,20 +153,20 @@ fn display_memory(pid: i32, add1: u64, add2: u64) {
                     writeln!(&mut io::stdout(), "Error: {:?}", e);
                 })
                 .map(|bytes| {
-                    writeln!(&mut io::stdout(), "{}", bytes_to_hex(&bytes))
+                    writeln!(&mut io::stdout(), "{}", bytes_to_hex(&bytes)) // is the memory is successfully read, it goes to the helper function to be displayed
                 })
                 .unwrap();
-            offset += cmp::min(40, chunk_size);
+            offset += cmp::min(40, chunk_size);  
             chunk_size -= 40;
         }
-
+        //I originally put this line for debugging, but I find it helpful to quick refer to
         writeln!(&mut io::stdout(), "Start Address: {:X?} Current Offset: {:X?} Ending Address: {:X?}", add1, offset, add2);
 
-        if add1+offset+chunk_size < add2 {
+        if add1+offset+chunk_size < add2 {  //this logic lets the mem viewer automatically quit when it has displayed it's full range
             writeln!(&mut io::stdout(), "Commands: (n) to view the next page. (q) to quit memory viewer mode.");
 
             let mut input = String::new();
-            write!(&mut io::stdout(), "$$ ");
+            write!(&mut io::stdout(), "$$ "); //mem viewer has a different prompt, a $$
             io ::stdout().flush();
 
             stin.read_line(&mut input);
@@ -159,6 +181,7 @@ fn display_memory(pid: i32, add1: u64, add2: u64) {
     }
 }
 
+//This finds loaded modules by digging in the memory maps for anything with a path, executable or not
 fn find_loaded_modules(pid: i32) -> BTreeSet<String> {
     let mut modules = BTreeSet::new();
     writeln!(&mut io::stdout(), "Loaded Modules For PID: {}", pid);
@@ -180,6 +203,8 @@ fn find_loaded_modules(pid: i32) -> BTreeSet<String> {
     modules
 }
 
+//This is similar to find_loaded_modules, except all the elements are scanned for "x" in the permissions string first.
+//Each case is pattern matched to make key,value pair in a BTreeMap. We get an address range (as a tuple) for the key and a pretty informative string for the value.
 fn find_exec_pages(pid: i32) -> BTreeMap<(u64, u64), String> {
     let mut exec_pages = BTreeMap::new();
     writeln!(&mut io::stdout(), "Executable Pages For PID: {}", pid);
@@ -210,6 +235,7 @@ fn find_exec_pages(pid: i32) -> BTreeMap<(u64, u64), String> {
     exec_pages
 }
 
+//This is the little input parser for the mem viewer, returns true to quit.
 fn read_mem_parse_input(input: &str) -> bool {
     match input.trim() {
         "n" => {
@@ -225,12 +251,15 @@ fn read_mem_parse_input(input: &str) -> bool {
     false
 }
 
+//And finally the main function, It has a global System variable for the thread command, a bool for a flag to quit the program, and some stin input stuff.
+//Note the stin is dropper after each input, so that the mem viewer isn't locked out of getting keyboard input from the user.
 fn main() {
     let mut t = System::new();
     let t_stin = io::stdin();
     let mut done = false;
 
     println!("Enter 'help' to get a command list.");
+    //the main program loop is here, grabbing input, and quitting is parse_input returns true.
     while !done {
         let mut stin = t_stin.lock();
         let mut input = String::new();
