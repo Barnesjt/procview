@@ -4,25 +4,29 @@
 
 extern crate sysinfo;
 extern crate procfs;
+extern crate benfred_read_process_memory;
 
+use benfred_read_process_memory::*;
+use std::convert::TryInto;
 use sysinfo::{System, SystemExt, ProcessExt, Pid};
 use std::io::{self, BufRead, Write};
 use std::str::FromStr;
 use std::collections::{BTreeMap, BTreeSet};
+use std::cmp;
 //use std::path::Path;
 //use std::ffi::OsStr;
 //use std::result::Result;
 
 fn print_help() {
-    writeln!(&mut io::stdout(), "               ==       procview       ==               ");
-    writeln!(&mut io::stdout(), "               ==  Available Commands  ==               ");
-    writeln!(&mut io::stdout(), "========================================================");
-    writeln!(&mut io::stdout(), "            help : Show Available Commands              ");
-    writeln!(&mut io::stdout(), "              ps : View All Processes                   ");
-    writeln!(&mut io::stdout(), "       pst <pid> : View Process Threads                 ");
-    writeln!(&mut io::stdout(), "        lm <pid> : View Loaded Modules Within Process   ");
-    writeln!(&mut io::stdout(), "        xp <pid> : View Executable Pages Within Process ");
-    writeln!(&mut io::stdout(), " mem <pid> <loc> : View Process Memory At Location      ");
+    writeln!(&mut io::stdout(), "                  ==   procview v.0.1.0   ==                  ");
+    writeln!(&mut io::stdout(), "                  ==  Available Commands  ==                  ");
+    writeln!(&mut io::stdout(), "==============================================================");
+    writeln!(&mut io::stdout(), "            help : Show Available Commands                    ");
+    writeln!(&mut io::stdout(), "              ps : View All Processes                         ");
+    writeln!(&mut io::stdout(), "       pst <pid> : View Process Threads                       ");
+    writeln!(&mut io::stdout(), "        lm <pid> : View Loaded Modules Within Process         ");
+    writeln!(&mut io::stdout(), "        xp <pid> : View Executable Pages Within Process       ");
+    writeln!(&mut io::stdout(), "   mem <pid> <#> : View Memory of Executable Page (# from xp) ");
 }
 
 fn parse_input(input: &str, sys: &mut System) -> bool {
@@ -74,8 +78,27 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
             if tmp.len() != 2 {
                 writeln!(&mut io::stdout(), "xp command expects a pid argument");
             } else if let Ok(pid) = Pid::from_str(tmp[1]) {
-                for ((add1, add2), name) in find_exec_pages(pid).iter() {
-                    writeln!(&mut io::stdout(), "|---- {:X?} - {:X?} :\t{}", add1, add2, name);
+                for (index, ((add1, add2), name)) in find_exec_pages(pid).iter().enumerate() {
+                    writeln!(&mut io::stdout(), "|-- ({}) -- {:X?} - {:X?} :\t{}", index, add1, add2, name);
+                }
+            }
+        }        
+        e if e.starts_with("mem ") => {
+            let tmp : Vec<&str> = e.split(' ').collect();
+            if tmp.len() != 3 {
+                writeln!(&mut io::stdout(), "xp command expects 2 arguments, a pid and a number (0-...)");
+            } else {
+                match (Pid::from_str(tmp[1]), tmp[2].parse::<usize>()) {
+                    (Ok(pid), Ok(iparam)) => {
+                        for (index, ((add1, add2), _name)) in find_exec_pages(pid).iter().enumerate() {
+                            if iparam == index {
+                                display_memory(pid, *add1, *add2);
+                                return false;
+                            }
+                        }
+                        writeln!(&mut io::stdout(), "Could not find xp {} for pid: {}. Check your arguments and try again.", iparam, pid);
+                    },
+                    _e => writeln!(&mut io::stdout(), "Error: <pid> and/or <xp#> are not valid numbers. Try Again.").unwrap()
                 }
             }
         }
@@ -85,6 +108,58 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
         }
     }
     false
+}
+
+//From read_process_memory example code
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let hex_bytes: Vec<String> = bytes.iter()
+        .map(|b| format!("{:02X}", b))
+        .collect();
+    hex_bytes.join("")
+}
+
+fn display_memory(pid: i32, add1: u64, add2: u64) {
+    let handle: ProcessHandle = pid.try_into().unwrap();
+    let t_stin = io::stdin();
+    let mut stin = t_stin.lock();
+    let mut done = false;
+    let range = add2-add1;
+    let mut offset = 0;
+    while !done && offset < range {
+        let mut chunk_size = cmp::min(400, range-offset);
+        writeln!(&mut io::stdout(), "Viewing PID: {} Current Memory Addresses: {:X?} - {:X?}", pid, add1+offset, add1+offset+chunk_size);
+        while chunk_size >= 40 {
+            copy_address((add1+offset) as usize, cmp::min(40, chunk_size as usize), &handle)
+                .map_err(|e| {
+                    writeln!(&mut io::stdout(), "Error: {:?}", e);
+                })
+                .map(|bytes| {
+                    writeln!(&mut io::stdout(), "{}", bytes_to_hex(&bytes))
+                })
+                .unwrap();
+            offset += cmp::min(40, chunk_size);
+            chunk_size -= 40;
+        }
+
+        writeln!(&mut io::stdout(), "Start Address: {:X?} Current Offset: {:X?} Ending Address: {:X?}", add1, offset, add2);
+
+        if add1+offset+chunk_size < add2 {
+            writeln!(&mut io::stdout(), "Commands: (n) to view the next page. (q) to quit memory viewer mode.");
+
+            let mut input = String::new();
+            write!(&mut io::stdout(), "$$ ");
+            io ::stdout().flush();
+
+            stin.read_line(&mut input);
+            if (&input as &str).ends_with('\n') {
+                input.pop();
+            }
+            done = read_mem_parse_input(input.as_ref());
+        } else {
+            writeln!(&mut io::stdout(), "Finished displaying requested memory locations.");
+            done = true;
+        }
+    }
 }
 
 fn find_loaded_modules(pid: i32) -> BTreeSet<String> {
@@ -138,19 +213,35 @@ fn find_exec_pages(pid: i32) -> BTreeMap<(u64, u64), String> {
     exec_pages
 }
 
+fn read_mem_parse_input(input: &str) -> bool {
+    match input.trim() {
+        "n" => {
+            return false;
+        },
+        "q" => {
+            return true;
+        },
+        _e => {
+            writeln!(&mut io::stdout(), "Invalid Command. Use 'n' for next and 'q' to quit.")
+        }
+    };
+    false
+}
+
 fn main() {
     let mut t = System::new();
     let t_stin = io::stdin();
-    let mut stin = t_stin.lock();
     let mut done = false;
 
     println!("Enter 'help' to get a command list.");
     while !done {
+        let mut stin = t_stin.lock();
         let mut input = String::new();
         write!(&mut io::stdout(), "> ");
         io ::stdout().flush();
 
         stin.read_line(&mut input);
+        drop(stin);
         if (&input as &str).ends_with('\n') {
             input.pop();
         }

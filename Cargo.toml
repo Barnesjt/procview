@@ -7,5 +7,4 @@ edition = "2018"
 [dependencies]
 sysinfo = "0.9.0"
 procfs = "0.5.3"
-proc-maps = "0.1.6"
-akhramov-read-process-memory = "0.1.7"
+benfred-read-process-memory = "0.1.4"
