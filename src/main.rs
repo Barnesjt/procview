@@ -29,7 +29,7 @@ fn print_help() {
     writeln!(&mut io::stdout(), "        lm <pid> : View Loaded Modules Within Process         ");
     writeln!(&mut io::stdout(), "        xp <pid> : View Executable Pages Within Process       ");
     writeln!(&mut io::stdout(), "   mem <pid> <#> : View Memory of Executable Page (# from xp) ");
-    writeln!(&mut io::stdout(), "            exit : Close the Program                          ");
+    writeln!(&mut io::stdout(), "            quit : Close the Program                          ");
 }
 
 //This function contains the main control structure, parsing the user input give to is my main, it is also given access to
@@ -63,9 +63,9 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 match sys.get_process(pid) {
                     Some(p) => {
                         writeln!(&mut io::stdout(), "TGID: {:?}", pid);
-                        writeln!(&mut io::stdout(), "|");
+                        writeln!(&mut io::stdout(), "|---- Thread PID: {}", pid);
                         for (key, _val) in p.tasks.iter() {
-                            writeln!(&mut io::stdout(), "|--------- Thread PID: {}", key);
+                            writeln!(&mut io::stdout(), "|---- Thread PID: {}", key);
                         }
                     },
                     None => writeln!(&mut io::stdout(), "pid not found").expect("OK")
@@ -91,7 +91,7 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 writeln!(&mut io::stdout(), "xp command expects a pid argument");
             } else if let Ok(pid) = Pid::from_str(tmp[1]) {
                 for (index, ((add1, add2), name)) in find_exec_pages(pid).iter().enumerate() {
-                    writeln!(&mut io::stdout(), "|-- ({}) -- {:X?} - {:X?} :\t{}", index, add1, add2, name);
+                    writeln!(&mut io::stdout(), "({}) {:X?}\t{} Bytes \t{}", index, add1, (add2-add1), trim_path(name.to_string()));
                 }
             }
         }
@@ -124,6 +124,23 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
         }
     }
     false
+}
+
+fn trim_path(orig_path: String) -> String {
+    if orig_path.chars().count() > 40 {
+        trim_path_helper(orig_path.to_string())
+    } else {
+        return orig_path;
+    }
+}
+
+fn trim_path_helper(trim_path: String) -> String {
+    let new_path = &trim_path[trim_path.find('/').unwrap()+1..];
+    if new_path.chars().count() > 36 {
+        return trim_path_helper(new_path.to_string());
+    } else {
+        return format!(".../{}", new_path.to_string());
+    }
 }
 
 //From read_process_memory example code
@@ -257,8 +274,8 @@ fn main() {
     let mut t = System::new();
     let t_stin = io::stdin();
     let mut done = false;
-
-    println!("Enter 'help' to get a command list.");
+    //start the program by printing the help menu (which has program identification as well)
+    print_help();
     //the main program loop is here, grabbing input, and quitting is parse_input returns true.
     while !done {
         let mut stin = t_stin.lock();
