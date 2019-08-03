@@ -20,16 +20,17 @@ use std::cmp;
 
 //This function just prints the preformatted help display
 fn print_help() {
-    writeln!(&mut io::stdout(), "                  ==   procview v.0.1.0   ==                  ");
-    writeln!(&mut io::stdout(), "                  ==  Available Commands  ==                  ");
-    writeln!(&mut io::stdout(), "==============================================================");
-    writeln!(&mut io::stdout(), "            help : Show Available Commands                    ");
-    writeln!(&mut io::stdout(), "              ps : View All Processes                         ");
-    writeln!(&mut io::stdout(), "       pst <pid> : View Process Threads                       ");
-    writeln!(&mut io::stdout(), "        lm <pid> : View Loaded Modules Within Process         ");
-    writeln!(&mut io::stdout(), "        xp <pid> : View Executable Pages Within Process       ");
-    writeln!(&mut io::stdout(), "   mem <pid> <#> : View Memory of Executable Page (# from xp) ");
-    writeln!(&mut io::stdout(), "            quit : Close the Program                          ");
+    writeln!(&mut io::stdout(), "                    ==   procview v.0.1.0   ==                    ");
+    writeln!(&mut io::stdout(), "                    ==  Available Commands  ==                    ");
+    writeln!(&mut io::stdout(), "==================================================================");
+    writeln!(&mut io::stdout(), "              help : Show Available Commands                      ");
+    writeln!(&mut io::stdout(), "                ps : View All Processes                           ");
+    writeln!(&mut io::stdout(), "         pst <pid> : View Process Threads                         ");
+    writeln!(&mut io::stdout(), "          lm <pid> : View Loaded Modules Within Process           ");
+    writeln!(&mut io::stdout(), "          xp <pid> : View Executable Pages Within Process         ");
+    writeln!(&mut io::stdout(), "  mem <pid> <addr> : View Process Memory at Address               ");
+    writeln!(&mut io::stdout(), "  memx <pid> <xp#> : View Memory of Executable Page (pg # from xp)");
+    writeln!(&mut io::stdout(), "              quit : Close the Program                            ");
 }
 
 //This function contains the main control structure, parsing the user input give to is my main, it is also given access to
@@ -95,12 +96,12 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 }
             }
         }
-        //mem shows the actal contents of memory given a pid, and a number, as identified in the xp command
+        //memx shows the actal contents of memory given a pid, and a number, as identified in the xp command
         //this command will jump into a different mode for viewing the memory, a piece at a time.       
-        e if e.starts_with("mem ") => {
+        e if e.starts_with("memx ") => {
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 3 {
-                writeln!(&mut io::stdout(), "xp command expects 2 arguments, a pid and a number (0-...)");
+                writeln!(&mut io::stdout(), "memx command expects 2 arguments, a pid and a number (0-...)");
             } else {
                 match (Pid::from_str(tmp[1]), tmp[2].parse::<usize>()) {
                     (Ok(pid), Ok(iparam)) => {
@@ -116,6 +117,22 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
                 }
             }
         }
+                //memx shows the actal contents of memory given a pid, and a number, as identified in the xp command
+        //this command will jump into a different mode for viewing the memory, a piece at a time.       
+        e if e.starts_with("mem ") => {
+            let tmp : Vec<&str> = e.split(' ').collect();
+            if tmp.len() != 3 {
+                writeln!(&mut io::stdout(), "mem command expects 2 arguments, a pid and an address");
+            } else {
+                match (Pid::from_str(tmp[1]), hex::decode(tmp[2])) {
+                    (Ok(pid), Ok(iaddr)) => {
+                        display_memory(pid, concat_vec_u8(iaddr), 18446744073699069952);
+                            return false;
+                    },
+                    _e => writeln!(&mut io::stdout(), "Error: <pid> and/or <addr> are not valid numbers. Try Again.").unwrap()
+                }
+            }
+        }
         //quit or exit are both valid commands to exit the program
         "quit" | "exit" => return true,
         //anything unmatched will return this error messege
@@ -124,6 +141,19 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
         }
     }
     false
+}
+
+fn concat_vec_u8 (input: Vec<u8>) -> u64 {
+    concat_vec_u8_helper(0, input, 0)
+}
+
+fn concat_vec_u8_helper (count: u8, mut input: Vec<u8>, result: u64) -> u64 {
+    let next = input.pop().expect("Problem encountered decoding u8 Vector");
+    let modifier = 256u64.pow(count.into());
+    if input.len() == 0 {
+        return result + (next as u64 * modifier as u64);
+    }
+    concat_vec_u8_helper(count+1, input, result + (next as u64 * modifier as u64))
 }
 
 fn trim_path(orig_path: String) -> String {
