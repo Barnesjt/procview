@@ -4,18 +4,18 @@
 
 //Crate Imports, procfs does most of the work, 
 //sysinfo unfortunately had to be retained to easily read threads (couldn't find the ability in other crates)
-extern crate sysinfo;
 extern crate procfs;
+extern crate hex;
 extern crate benfred_read_process_memory;
 
 //some scoping
 use benfred_read_process_memory::*;
 use std::convert::TryInto;
-use sysinfo::{System, SystemExt, Pid};
 use std::io::{self, BufRead, Write};
 use std::str::FromStr;
 use std::collections::{BTreeMap, BTreeSet};
 use std::cmp;
+use std::fs;
 
 
 //This function just prints the preformatted help display
@@ -35,7 +35,7 @@ fn print_help() {
 
 //This function contains the main control structure, parsing the user input give to is my main, it is also given access to
 //A System variable for the sysinfo crate to use. It returns a Bool that indicates if the program should stop execution.
-fn parse_input(input: &str, sys: &mut System) -> bool {
+fn parse_input(input: &str) -> bool {
     match input.trim() {
         //help menu display
         "help" => print_help(),
@@ -56,20 +56,18 @@ fn parse_input(input: &str, sys: &mut System) -> bool {
         }
         //pst displays additional threads that are associated with the given PID, it does not show the main process thread again.
         e if e.starts_with("pst ") => {
-            sys.refresh_all();
             let tmp : Vec<&str> = e.split(' ').collect();
             if tmp.len() != 2 {
                 writeln!(&mut io::stdout(), "pst command expects a pid argument");
             } else if let Ok(pid) = Pid::from_str(tmp[1]) {
-                match sys.get_process(pid) {
-                    Some(p) => {
-                        writeln!(&mut io::stdout(), "TGID: {:?}", pid);
-                        writeln!(&mut io::stdout(), "|---- Thread PID: {}", pid);
-                        for (key, _val) in p.tasks.iter() {
-                            writeln!(&mut io::stdout(), "|---- Thread PID: {}", key);
+                match fs::read_dir(format!("/proc/{}/task/", pid)) {
+                    Ok(paths) => {
+                        writeln!(&mut io::stdout(), "TGID: {}", pid);
+                        for path in paths {
+                            writeln!(&mut io::stdout(), "|---- Thread PID: {}", path.unwrap().file_name().into_string().unwrap());
                         }
                     },
-                    None => writeln!(&mut io::stdout(), "pid not found").expect("OK")
+                    _e => writeln!(&mut io::stdout(), "PID not found").expect("Error writing to stdout.")
                 };
             }
         }
@@ -207,7 +205,7 @@ fn display_memory(pid: i32, add1: u64, add2: u64) {
             chunk_size -= 40;
         }
         //I originally put this line for debugging, but I find it helpful to quick refer to
-        writeln!(&mut io::stdout(), "Start Address: {:X?} Current Offset: {:X?} Ending Address: {:X?}", add1, offset, add2);
+        writeln!(&mut io::stdout(), "Start Addr: {:X?} Offset: {:X?} End Addr: {:X?}", add1, offset, add2);
 
         if add1+offset+chunk_size < add2 {  //this logic lets the mem viewer automatically quit when it has displayed it's full range
             writeln!(&mut io::stdout(), "Commands: (n) to view the next page. (q) to quit memory viewer mode.");
@@ -301,7 +299,6 @@ fn read_mem_parse_input(input: &str) -> bool {
 //And finally the main function, It has a global System variable for the thread command, a bool for a flag to quit the program, and some stin input stuff.
 //Note the stin is dropper after each input, so that the mem viewer isn't locked out of getting keyboard input from the user.
 fn main() {
-    let mut t = System::new();
     let t_stin = io::stdin();
     let mut done = false;
     //start the program by printing the help menu (which has program identification as well)
@@ -318,6 +315,6 @@ fn main() {
         if (&input as &str).ends_with('\n') {
             input.pop();
         }
-        done = parse_input(input.as_ref(), &mut t);
+        done = parse_input(input.as_ref());
     }
 }
