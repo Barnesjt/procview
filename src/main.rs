@@ -20,7 +20,7 @@ use std::fs;
 
 //This function just prints the preformatted help display
 fn print_help() {
-    writeln!(&mut io::stdout(), "                    ==   procview v.0.1.0   ==                    ");
+    writeln!(&mut io::stdout(), "                    ==   procview v 0.1.1   ==                    ");
     writeln!(&mut io::stdout(), "                    ==  Available Commands  ==                    ");
     writeln!(&mut io::stdout(), "==================================================================");
     writeln!(&mut io::stdout(), "              help : Show Available Commands                      ");
