@@ -98,4 +98,3 @@ cargo build --release
 And the result will be at: ./target/release/procview
 
 Thanks for checking out this project!
-
